@@ -174,13 +174,16 @@
 			newLink.rel = 'noopener noreferrer';
 			newLink.innerHTML = aData.html;
 
-			const otherAttr = { ...aData };
-			delete otherAttr['data-link'];
-			delete otherAttr['html'];
-			delete otherAttr['title'];
+			const notNeededAttr = [
+				'data-link',
+				'html',
+				'title'
+			];
 
 			for (let key in otherAttr) {
-				newLink.setAttribute(key, aData[key]);
+				if (!notNeededAttr.includes(key)) {
+					newLink.setAttribute(key, aData[key]);
+				}
 			}
 
 			link.parentNode.replaceChild(newLink, link);
