@@ -168,16 +168,16 @@
 				html: removeUndefined(link.innerHTML)
 			};
 
-			const otherAttr = { ...aData };
-			delete otherAttr['data-link'];
-			delete otherAttr['html'];
-			delete otherAttr['title'];
-
 			const newLink = document.createElement('a');
 			newLink.href = aData['data-link'];
 			newLink.target = '_BLANK';
 			newLink.rel = 'noopener noreferrer';
 			newLink.innerHTML = aData.html;
+
+			const otherAttr = { ...aData };
+			delete otherAttr['data-link'];
+			delete otherAttr['html'];
+			delete otherAttr['title'];
 
 			for (let key in otherAttr) {
 				newLink.setAttribute(key, aData[key]);
