@@ -162,7 +162,7 @@
 
 		document.querySelectorAll('.hidden-link').forEach((link) => {
 			const attrs = link.getAttributeNames().reduce((acc, name) => {
-				return {...acc, [name]: element.getAttribute(name)};
+				return {...acc, [name]: link.getAttribute(name)};
 			}, {});
 			const aData = {
 				...attrs,
