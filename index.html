@@ -169,7 +169,7 @@
 			};
 
 			const newLink = document.createElement('a');
-			newLink.href = aData['data-link'];
+			newLink.href = aData.dataset.link;
 			newLink.target = '_BLANK';
 			newLink.rel = 'noopener noreferrer';
 			newLink.innerHTML = aData.html;
