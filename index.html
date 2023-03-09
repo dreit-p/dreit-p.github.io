@@ -162,26 +162,24 @@
 
 		document.querySelectorAll('.hidden-link').forEach((link) => {
 			const aData = {
-				...link.dataset,
+				...link,
 				title: removeUndefined(link.title || link.textContent),
 				class: `link ${link.className.replace('hidden-link', '')}`,
 				html: removeUndefined(link.innerHTML)
 			};
 
 			const newLink = document.createElement('a');
-			newLink.href = aData.dataset.link;
-			newLink.target = '_BLANK';
-			newLink.rel = 'noopener noreferrer';
+			newLink.href = aData["data-link"];
 			newLink.innerHTML = aData.html;
+			console.log(aData)
 
-			const otherAttr = { ...aData };
 			const notNeededAttr = [
 				'data-link',
 				'html',
 				'title'
 			];
 
-			for (let key in otherAttr) {
+			for (let key in aData) {
 				if (!notNeededAttr.includes(key)) {
 					newLink.setAttribute(key, aData[key]);
 				}
