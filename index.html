@@ -161,11 +161,14 @@
 		});
 
 		document.querySelectorAll('.hidden-link').forEach((link) => {
+			const attrs = link.getAttributeNames().reduce((acc, name) => {
+				return {...acc, [name]: element.getAttribute(name)};
+			}, {});
 			const aData = {
-				...link,
-				title: removeUndefined(link.title || link.textContent),
-				class: `link ${link.className.replace('hidden-link', '')}`,
-				html: removeUndefined(link.innerHTML)
+				...attrs,
+				title: removeUndefined(attrs.title || attrs.textContent),
+				class: `link ${attrs.className.replace('hidden-link', '')}`,
+				html: removeUndefined(attrs.innerHTML)
 			};
 
 			const newLink = document.createElement('a');
