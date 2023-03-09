@@ -167,7 +167,7 @@
 			const aData = {
 				...attrs,
 				title: removeUndefined(attrs.title || attrs.textContent),
-				class: `link ${attrs.className.replace('hidden-link', '')}`,
+				class: `link ${link.className?.replace('hidden-link', '')}`,
 				html: removeUndefined(attrs.innerHTML)
 			};
 
