@@ -166,9 +166,9 @@
 			}, {});
 			const aData = {
 				...attrs,
-				title: removeUndefined(attrs.title || attrs.textContent),
+				title: removeUndefined(link.title || link.textContent),
 				class: `link ${link.className?.replace('hidden-link', '')}`,
-				html: removeUndefined(attrs.innerHTML)
+				html: removeUndefined(link.innerHTML)
 			};
 
 			const newLink = document.createElement('a');
