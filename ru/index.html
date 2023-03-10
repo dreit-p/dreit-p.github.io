@@ -161,26 +161,30 @@
 		});
 
 		document.querySelectorAll('.hidden-link').forEach((link) => {
+			const attrs = link.getAttributeNames().reduce((acc, name) => {
+				return {...acc, [name]: link.getAttribute(name)};
+			}, {});
 			const aData = {
-				...link.dataset,
+				...attrs,
 				title: removeUndefined(link.title || link.textContent),
-				class: `link ${link.className.replace('hidden-link', '')}`,
+				class: `link ${link.className?.replace('hidden-link', '')}`,
 				html: removeUndefined(link.innerHTML)
 			};
 
-			const otherAttr = { ...aData };
-			delete otherAttr['data-link'];
-			delete otherAttr['html'];
-			delete otherAttr['title'];
-
 			const newLink = document.createElement('a');
-			newLink.href = aData['data-link'];
-			newLink.target = '_BLANK';
-			newLink.rel = 'noopener noreferrer';
+			newLink.href = aData["data-link"];
 			newLink.innerHTML = aData.html;
 
-			for (let key in otherAttr) {
-				newLink.setAttribute(key, aData[key]);
+			const notNeededAttr = [
+				'data-link',
+				'html',
+				'title'
+			];
+
+			for (let key in aData) {
+				if (!notNeededAttr.includes(key)) {
+					newLink.setAttribute(key, aData[key]);
+				}
 			}
 
 			link.parentNode.replaceChild(newLink, link);
