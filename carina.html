@@ -58,7 +58,15 @@
             </label>
 
             <label>
-              Shipping Cost (EUR)
+              <span class="label-heading">
+                Shipping Cost (EUR)
+                <span
+                  class="help-icon"
+                  title="The customs takes into account both product and shipping costs when calculating duties."
+                >
+                  ?
+                </span>
+              </span>
               <input
                 type="text"
                 v-model.trim="form.shippingCost"
@@ -106,7 +114,8 @@
                     Final Cost
                     <span
                       class="help-icon"
-                      title="The percentage shows how the total changes relative to the original product price."
+                      title="Formula: (Product + Shipping) * 1.1 * 1.2 - Product discount
+                      The percentage shows how the total changes relative to the original product price."
                     >
                       ?
                     </span>
