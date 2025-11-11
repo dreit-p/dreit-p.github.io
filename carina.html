@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Customs Duty Calculator</title>
+    <link rel="stylesheet" href="carina.css" />
+  </head>
+  <body>
+    <div id="app" class="app-shell">
+      <h1>Serbian Customs Duty Calculator</h1>
+
+      <section class="card">
+        <h2>Add Record</h2>
+        <form @submit.prevent="addRecord">
+          <div class="form-row form-row--inline">
+            <label>
+              Record Name
+              <input
+                type="text"
+                v-model.trim="form.title"
+                placeholder="Example: AirPods"
+                maxlength="80"
+                required
+              />
+            </label>
+
+            <label>
+              <span class="label-heading">
+                Discount (%)
+                <span
+                  class="help-icon"
+                  title="Discount applies to the product price only. Customs duty is calculated on the original declared value. To have duties calculated on a discount, enter the discounted price directly."
+                >
+                  ?
+                </span>
+              </span>
+              <input
+                type="number"
+                v-model.trim="form.discount"
+                placeholder="0"
+                min="0"
+                max="100"
+                step="0.1"
+              />
+            </label>
+          </div>
+
+          <div class="form-row form-row--split">
+            <label>
+              Product Cost (EUR)
+              <input
+                type="text"
+                v-model.trim="form.itemCost"
+                placeholder="e.g. 100 or 100 USD"
+                required
+              />
+            </label>
+
+            <label>
+              Shipping Cost (EUR)
+              <input
+                type="text"
+                v-model.trim="form.shippingCost"
+                placeholder="e.g. 15 or 1800 RSD"
+                required
+              />
+            </label>
+          </div>
+
+          <div class="button-row">
+            <button type="submit" :disabled="!isFormValid || isSubmitting">
+              {{ isSubmitting ? "Adding..." : "Add Record" }}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section class="card">
+        <div class="table-header">
+          <h2>Calculation Log</h2>
+          <button
+            type="button"
+            class="danger"
+            @click="clearAll"
+            :disabled="!hasRecords"
+          >
+            Clear All
+          </button>
+        </div>
+
+        <p v-if="!hasRecords" class="empty-state">
+          No saved records yet. Add the first entry to see the calculations.
+        </p>
+
+        <div v-else class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="title-cell">Name</th>
+                <th>Product Cost</th>
+                <th>Shipping Cost</th>
+                <th>Customs Duties</th>
+                <th>
+                  <span class="label-heading">
+                    Final Cost
+                    <span
+                      class="help-icon"
+                      title="The percentage shows how the total changes relative to the original product price."
+                    >
+                      ?
+                    </span>
+                  </span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="entry in processedRecords" :key="entry.id">
+                <td class="title-cell">
+                  <span class="title-text" :title="entry.title">
+                    {{ entry.title }}
+                  </span>
+                </td>
+                <td>
+                  <div class="cell-primary">
+                    <span>{{ formatCurrency(entry.discountedItemCost) }}</span>
+                    <span v-if="entry.discountPercentDisplay">
+                      ({{ entry.discountPercentDisplay }})
+                    </span>
+                  </div>
+                  <div v-if="entry.itemOriginalDisplay" class="cell-subtext">
+                    {{ entry.itemOriginalDisplay }}
+                  </div>
+                </td>
+                <td>
+                  <div class="cell-primary">
+                    <span>{{ formatCurrency(entry.shippingValue) }}</span>
+                  </div>
+                  <div
+                    v-if="entry.shippingOriginalDisplay"
+                    class="cell-subtext"
+                  >
+                    {{ entry.shippingOriginalDisplay }}
+                  </div>
+                </td>
+                <td>
+                  <span :class="entry.customsDutyClass">
+                    {{ formatCurrency(entry.customsDuty) }}
+                  </span>
+                </td>
+                <td>
+                  <div class="final-cost-cell">
+                    <span>
+                      {{ formatCurrency(entry.totalWithCustoms) }} ({{
+                      entry.percentDisplay }})
+                    </span>
+                    <button
+                      type="button"
+                      class="icon-button"
+                      @click="removeRecord(entry.id)"
+                      aria-label="Delete record"
+                    >
+                      &times;
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script>
+      const STORAGE_KEY = "customs-duty-records";
+      const DEFAULT_CURRENCY = "EUR";
+      const AMOUNT_INPUT_PATTERN = /^([+-]?[0-9.,\s]+)(?:\s*([a-zA-Z]{3}))?$/;
+      const EXCHANGE_RATE_ENDPOINT = "https://open.er-api.com/v6/latest/";
+      const CURRENCY_LOCALE = "en-US";
+      const ORIGINAL_MAX_PRECISION = 4;
+      const FRACTION_DIGIT_LIMIT = 6;
+      const ID_SEPARATOR = "-";
+      const CUSTOMS_RULES = Object.freeze([
+        {
+          condition: (total) => total >= 30,
+          multiplier: 1.1,
+        },
+        {
+          condition: (total) => total >= 50,
+          multiplier: 1.2,
+        },
+      ]);
+
+      const EURO_FORMATTER = new Intl.NumberFormat(CURRENCY_LOCALE, {
+        style: "currency",
+        currency: DEFAULT_CURRENCY,
+        currencyDisplay: "code",
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+
+      const numberFormatterCache = new Map();
+
+      function getNumberFormatter(precision) {
+        if (!numberFormatterCache.has(precision)) {
+          numberFormatterCache.set(
+            precision,
+            new Intl.NumberFormat(CURRENCY_LOCALE, {
+              minimumFractionDigits: precision,
+              maximumFractionDigits: precision,
+            })
+          );
+        }
+
+        return numberFormatterCache.get(precision);
+      }
+
+      const { createApp } = Vue;
+
+      createApp({
+        data() {
+          return {
+            form: {
+              title: "",
+              discount: "",
+              itemCost: "",
+              shippingCost: "",
+            },
+            records: [],
+            exchangeRates: {},
+            exchangeRatePromises: {},
+            isSubmitting: false,
+          };
+        },
+        computed: {
+          isFormValid() {
+            const title = (this.form.title || "").trim();
+            const itemCostValid = this.isAmountInputValid(this.form.itemCost);
+            const shippingCostValid = this.isAmountInputValid(
+              this.form.shippingCost
+            );
+            const discountValid = this.isDiscountValid(this.form.discount);
+            return (
+              Boolean(title) &&
+              itemCostValid &&
+              shippingCostValid &&
+              discountValid
+            );
+          },
+          hasRecords() {
+            return this.records.length > 0;
+          },
+          processedRecords() {
+            return this.records.map((record) => this.enrichRecord(record));
+          },
+        },
+        methods: {
+          async addRecord() {
+            if (!this.isFormValid || this.isSubmitting) {
+              return;
+            }
+
+            this.isSubmitting = true;
+
+            try {
+              const discountPercent = this.prepareDiscount(this.form.discount);
+              const [productAmount, shippingAmount] = await Promise.all([
+                this.prepareAmount(this.form.itemCost, "Product cost"),
+                this.prepareAmount(this.form.shippingCost, "Shipping cost"),
+              ]);
+
+              const newRecord = this.buildRecord({
+                title: this.form.title,
+                discountPercent,
+                productAmount,
+                shippingAmount,
+              });
+
+              this.records = [...this.records, newRecord];
+              this.resetForm();
+            } catch (error) {
+              this.handleError(error);
+            } finally {
+              this.isSubmitting = false;
+            }
+          },
+          async prepareAmount(input, fieldLabel) {
+            const parsed = this.parseAmountInput(input);
+
+            if (!parsed) {
+              throw new Error(`${fieldLabel || "Amount"} has invalid format.`);
+            }
+
+            try {
+              const value = await this.convertToEuro(parsed);
+              const original = this.buildOriginalRecord(parsed);
+
+              return { value, original };
+            } catch (error) {
+              const reason =
+                error &&
+                typeof error.message === "string" &&
+                error.message.trim()
+                  ? error.message
+                  : "unexpected error";
+
+              throw new Error(
+                `${fieldLabel || "Amount"} conversion failed: ${reason}`
+              );
+            }
+          },
+          handleError(error) {
+            console.error("Failed to process request", error);
+
+            const message =
+              error && typeof error.message === "string" && error.message.trim()
+                ? error.message
+                : "Unable to process the values. Please check the input format or try again later.";
+
+            window.alert(message);
+          },
+          normalizeTitle(value) {
+            const title = String(value ?? "").trim();
+            return title || "Untitled";
+          },
+          calculateDiscount(amount, percent) {
+            const safeAmount = Math.max(this.toSafeNumber(amount), 0);
+            const safePercent = this.toSafePercent(percent);
+            return this.roundToCents((safeAmount * safePercent) / 100);
+          },
+          calculatePercentChange(baseValue, targetValue) {
+            const base = this.toSafeNumber(baseValue);
+            const target = this.toSafeNumber(targetValue);
+
+            if (base <= 0) {
+              return 0;
+            }
+
+            return (target / base) * 100;
+          },
+          buildRecord({
+            title,
+            discountPercent,
+            productAmount,
+            shippingAmount,
+          }) {
+            return {
+              id: this.generateRecordId(),
+              title: this.normalizeTitle(title),
+              itemCost: this.toSafeNumber(productAmount?.value),
+              shippingCost: this.toSafeNumber(shippingAmount?.value),
+              itemOriginal: this.sanitizeOriginal(productAmount?.original),
+              shippingOriginal: this.sanitizeOriginal(shippingAmount?.original),
+              discountPercent: this.toSafePercent(discountPercent),
+            };
+          },
+          sanitizeRecord(entry) {
+            if (!entry || typeof entry !== "object") {
+              return null;
+            }
+
+            return {
+              id: entry.id || this.generateRecordId(),
+              title: this.normalizeTitle(entry.title),
+              itemCost: this.toSafeNumber(entry.itemCost),
+              shippingCost: this.toSafeNumber(entry.shippingCost),
+              itemOriginal: this.sanitizeOriginal(entry.itemOriginal),
+              shippingOriginal: this.sanitizeOriginal(entry.shippingOriginal),
+              discountPercent: this.toSafePercent(entry.discountPercent),
+            };
+          },
+          enrichRecord(record) {
+            const itemCostValue = this.toSafeNumber(record.itemCost);
+            const shippingValue = this.toSafeNumber(record.shippingCost);
+            const discountPercent = this.toSafePercent(record.discountPercent);
+            const discountAmount = this.calculateDiscount(
+              itemCostValue,
+              discountPercent
+            );
+            const discountedItemCost = this.roundToCents(
+              Math.max(itemCostValue - discountAmount, 0)
+            );
+            const baseTotal = itemCostValue + shippingValue;
+            const customsTotalBeforeDiscount =
+              this.applyCustomsRules(baseTotal);
+            const totalWithCustoms = this.roundToCents(
+              Math.max(customsTotalBeforeDiscount - discountAmount, 0)
+            );
+            const customsDuty = this.roundToCents(
+              customsTotalBeforeDiscount - baseTotal
+            );
+            const appliedRules = this.getAppliedCustomsRules(baseTotal);
+            const effectivePercent = this.calculatePercentChange(
+              itemCostValue,
+              totalWithCustoms
+            );
+            const percentDisplay = this.formatPercent(effectivePercent);
+            const itemOriginalDisplay = this.formatOriginalDisplay(
+              record.itemOriginal
+            );
+            const shippingOriginalDisplay = this.formatOriginalDisplay(
+              record.shippingOriginal
+            );
+            const discountPercentDisplay =
+              discountPercent > 0
+                ? `-${this.formatPercent(discountPercent)}`
+                : "";
+
+            let customsDutyClass = null;
+
+            if (appliedRules.some((rule) => rule.multiplier === 1.2)) {
+              customsDutyClass = "duty-accent--red";
+            } else if (appliedRules.some((rule) => rule.multiplier === 1.1)) {
+              customsDutyClass = "duty-accent--orange";
+            }
+
+            return {
+              ...record,
+              itemCostValue,
+              shippingValue,
+              totalWithCustoms,
+              customsDuty,
+              percentDisplay,
+              itemOriginalDisplay,
+              shippingOriginalDisplay,
+              discountPercent,
+              discountedItemCost,
+              discountPercentDisplay,
+              customsDutyClass,
+            };
+          },
+          isDiscountValid(value) {
+            return this.parseDiscount(value) !== null;
+          },
+          parseDiscount(value) {
+            const raw = `${value ?? ""}`.replace(/%/g, "").trim();
+
+            if (!raw) {
+              return 0;
+            }
+
+            const normalized = raw.replace(/,/g, ".");
+            const numeric = Number(normalized);
+
+            if (!Number.isFinite(numeric)) {
+              return null;
+            }
+
+            if (numeric < 0 || numeric > 100) {
+              return null;
+            }
+
+            return numeric;
+          },
+          prepareDiscount(value) {
+            const parsed = this.parseDiscount(value);
+
+            if (parsed === null) {
+              throw new Error("Discount must be a number between 0 and 100.");
+            }
+
+            return parsed;
+          },
+          isAmountInputValid(value) {
+            return Boolean(this.parseAmountInput(value));
+          },
+          parseAmountInput(value) {
+            const trimmed = `${value ?? ""}`.trim();
+
+            if (!trimmed) {
+              return null;
+            }
+
+            const match = trimmed.match(AMOUNT_INPUT_PATTERN);
+
+            if (!match) {
+              return null;
+            }
+
+            let [, amountPart, currencyPart] = match;
+            let normalized = amountPart.replace(/\s+/g, "");
+
+            if (normalized.includes(",") && normalized.includes(".")) {
+              normalized = normalized.replace(/,/g, "");
+            } else {
+              normalized = normalized.replace(/,/g, ".");
+            }
+
+            const amount = Number(normalized);
+
+            if (!Number.isFinite(amount) || amount < 0) {
+              return null;
+            }
+
+            const currency = (currencyPart || DEFAULT_CURRENCY).toUpperCase();
+
+            if (!/^[A-Z]{3}$/.test(currency)) {
+              return null;
+            }
+
+            return { amount, currency };
+          },
+          async convertToEuro(parsed) {
+            const amount = Number(parsed?.amount);
+            const currency = String(parsed?.currency || "").toUpperCase();
+
+            if (!Number.isFinite(amount) || amount < 0) {
+              throw new Error("Invalid amount value");
+            }
+
+            if (currency === DEFAULT_CURRENCY) {
+              return this.roundToCents(amount);
+            }
+
+            const rate = await this.fetchRate(currency);
+            return this.roundToCents(amount * rate);
+          },
+          buildOriginalRecord(parsed) {
+            const amount = Number(parsed?.amount);
+            const currency = String(parsed?.currency || "").toUpperCase();
+
+            if (!Number.isFinite(amount) || amount < 0) {
+              return null;
+            }
+
+            if (!/^[A-Z]{3}$/.test(currency) || currency === DEFAULT_CURRENCY) {
+              return null;
+            }
+
+            return { amount, currency };
+          },
+          async fetchRate(currency) {
+            const code = currency.toUpperCase();
+
+            if (this.exchangeRates[code]) {
+              return this.exchangeRates[code];
+            }
+
+            if (this.exchangeRatePromises[code]) {
+              return this.exchangeRatePromises[code];
+            }
+            const request = (async () => {
+              const response = await fetch(`${EXCHANGE_RATE_ENDPOINT}${code}`);
+
+              if (!response.ok) {
+                throw new Error(`Failed to fetch rate for ${code}`);
+              }
+
+              const data = await response.json();
+
+              if (data?.result !== "success") {
+                throw new Error(`No EUR rate available for ${code}`);
+              }
+
+              const rate = data?.rates?.[DEFAULT_CURRENCY];
+
+              if (typeof rate !== "number") {
+                throw new Error(`No EUR rate available for ${code}`);
+              }
+
+              this.exchangeRates[code] = rate;
+              return rate;
+            })().finally(() => {
+              delete this.exchangeRatePromises[code];
+            });
+
+            this.exchangeRatePromises[code] = request;
+            return request;
+          },
+          roundToCents(value) {
+            return Math.round(value * 100) / 100;
+          },
+          toSafeNumber(value) {
+            const numeric = Number(value);
+            return Number.isFinite(numeric) ? numeric : 0;
+          },
+          toSafePercent(value) {
+            const numeric = Number(value);
+
+            if (!Number.isFinite(numeric) || numeric < 0) {
+              return 0;
+            }
+
+            if (numeric > 100) {
+              return 100;
+            }
+
+            return numeric;
+          },
+          formatCurrency(value) {
+            const numeric = Number(value);
+
+            if (!Number.isFinite(numeric)) {
+              return EURO_FORMATTER.format(0);
+            }
+
+            return EURO_FORMATTER.format(numeric);
+          },
+          formatPercent(value) {
+            const numeric = Number(value);
+
+            if (!Number.isFinite(numeric)) {
+              return "0%";
+            }
+
+            const fixed = numeric.toFixed(1);
+            const trimmed = fixed
+              .replace(/\.0+$/, "")
+              .replace(/(\.\d*[1-9])0+$/, "$1");
+            return `${trimmed}%`;
+          },
+          formatOriginalDisplay(original) {
+            if (!original || typeof original !== "object") {
+              return "";
+            }
+
+            const amount = Number(original.amount);
+            const currency = String(original.currency || "").toUpperCase();
+
+            if (!Number.isFinite(amount) || !currency) {
+              return "";
+            }
+
+            const decimals = this.countFractionDigits(amount);
+            const precision = Math.min(
+              ORIGINAL_MAX_PRECISION,
+              Math.max(decimals, 0)
+            );
+            const formatter = getNumberFormatter(precision);
+            const formattedAmount = formatter.format(amount);
+
+            return `${formattedAmount} ${currency}`;
+          },
+          countFractionDigits(value) {
+            const numeric = Math.abs(Number(value));
+
+            if (!Number.isFinite(numeric)) {
+              return 0;
+            }
+
+            const fraction = numeric.toString().split(".")[1];
+
+            if (!fraction) {
+              return 0;
+            }
+
+            return Math.min(FRACTION_DIGIT_LIMIT, fraction.length);
+          },
+          generateRecordId() {
+            return `${Date.now()}${ID_SEPARATOR}${Math.random()
+              .toString(16)
+              .slice(2)}`;
+          },
+          removeRecord(id) {
+            this.records = this.records.filter((record) => record.id !== id);
+          },
+          applyCustomsRules(baseTotal) {
+            const total = this.toSafeNumber(baseTotal);
+
+            const multiplier = this.getAppliedCustomsRules(total).reduce(
+              (acc, rule) => acc * rule.multiplier,
+              1
+            );
+
+            return this.roundToCents(total * multiplier);
+          },
+          getAppliedCustomsRules(total) {
+            const numericTotal = this.toSafeNumber(total);
+
+            return CUSTOMS_RULES.filter((rule) =>
+              typeof rule.condition === "function"
+                ? rule.condition(numericTotal)
+                : false
+            );
+          },
+          resetForm() {
+            this.form.title = "";
+            this.form.discount = "";
+            this.form.itemCost = "";
+            this.form.shippingCost = "";
+          },
+          clearAll() {
+            if (!this.hasRecords) {
+              return;
+            }
+
+            const confirmation = window.confirm("Clear all saved records?");
+
+            if (confirmation) {
+              this.records = [];
+            }
+          },
+          persist(records = this.records) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+          },
+          restore() {
+            try {
+              const raw = localStorage.getItem(STORAGE_KEY);
+
+              if (!raw) {
+                return;
+              }
+
+              const parsed = JSON.parse(raw);
+
+              if (!Array.isArray(parsed)) {
+                return;
+              }
+
+              this.records = parsed
+                .map((entry) => this.sanitizeRecord(entry))
+                .filter(Boolean);
+            } catch (error) {
+              console.error("Failed to restore data from local storage", error);
+            }
+          },
+          sanitizeOriginal(original) {
+            if (!original || typeof original !== "object") {
+              return null;
+            }
+
+            const amount = Number(original.amount);
+            const currency = String(original.currency || "").toUpperCase();
+
+            if (!Number.isFinite(amount) || amount < 0) {
+              return null;
+            }
+
+            if (!/^[A-Z]{3}$/.test(currency) || currency === DEFAULT_CURRENCY) {
+              return null;
+            }
+
+            return { amount, currency };
+          },
+        },
+        mounted() {
+          this.restore();
+        },
+        watch: {
+          records(records) {
+            this.persist(records);
+          },
+        },
+      }).mount("#app");
+    </script>
+  </body>
+</html>
